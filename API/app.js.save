@@ -1,0 +1,219 @@
+var express = require('express');;
+var router = express.Router();
+
+var async = require('async')
+var fs = require('fs')
+var jwt = require("jsonwebtoken");
+var secretObj = require("./jwt");
+var mysql = require("mysql");
+var cookieParser = require('cookie-parser');
+var bodyParser = require('body-parser');
+var md5 = require('md5');
+var iconv = require('urlencode');
+var client = mysql.createConnection({
+  host: 'localhost',
+  user: 'root',
+  password: 'kku2017',
+  database: 'afewgoodman',
+  port: 3306,
+})
+var MongoClient = require('mongodb').MongoClient;
+var url = "mongodb://localhost:27017/Health_One";
+var db;
+
+MongoClient.connect(url, function(err, database) {
+    if(err) throw err;
+
+    console.log('데이터베이스에 연결됨: '+url);
+    db = database.db('Health_One'); /*database명을 명시했다.*/
+});
+
+var app = express();
+
+app.use(cookieParser());
+app.use(bodyParser.urlencoded({extended: false}));
+
+app.listen(3000, function(){
+  console.log('server is running');
+})
+
+app.post("/login", function(req,res,next){
+  var email = req.body.email;
+  var pwd = req.body.pwd;
+  console.log(email, pwd);
+  var token = jwt.sign({
+      email: email
+  },
+  secretObj.secret ,
+  {
+      expiresIn: '5m'	//토큰유지시간
+  })
+  client.query('select * from p_s_mbrdata where email = ?',[email],function(err, result){
+    if(err){	//db연결오류
+      res.json({code:500})
+      console.log(err)
+    }else if(result.length === 0){	//ID오류
+      res.json({code:410})
+      console.log('login failed.(ID)')
+    }else{	//로그인성공
+      if(result[0].pw === md5(pwd)){
+        res.cookie("user", token);
+	res.set({'content-type': 'application/json; charset=utf-8'});
+        res.json({email:email,
+		name:result[0].name,
+		code:210,
+		token:token});
+	console.log('login success')
+      }else{	//pw오류
+        console.log('login failed.(pw)')
+        res.json({code:411})
+      }
+    }
+  })
+})
+
+app.get("/list/:bbsid/:page", function(req,res,next){
+  var bbsid = req.params.bbsid;
+  var page = (parseInt(req.params.page) - 1)*20;
+  console.log(bbsid);
+  client.query('select * from p_s_board where bbsid = ? order by seq limit ?, 20',[bbsid,page],function(err, result){
+    if(err){    //db연결오류
+      res.json({code:500})
+      console.log(err)
+    }else{      //게시판 부르기성공
+      res.set({'content-type': 'application/json; charset=utf-8'});
+      res.json({page:req.body.page,
+		result: result?result:{}});
+      console.log('load success')
+    }
+  })
+})
+
+app.post("/insert", function(req,res,next){
+  var bbsid = req.body.bbsid;
+  var multi_category = req.body.multi_category;
+  var title = req.body.title;
+  var contents = req.body.contents;
+  console.log(bbsid, multi_category);
+    if(!title){      //제목오류
+      res.json({code:410})
+      console.log('write failed.(Empty title)')
+    }else{      //내용오류
+      if(!contents){
+        res.json({code:411});
+        console.log('write failed.(Empty contents)')
+      }else{
+        client.query('insert into p_s_board (bbsid, multi_category, title, contents, hit, d_regis, d_modify) values (?, ?, ?, ?, 0, now(), now())',[bbsid, multi_category, title, contents],function(err, result){
+          if(err){
+            res.json({code:500});
+            console.log(err);
+          }else{
+            console.log('write success')    //쓰기성공
+            res.json({code:210})
+          }
+        })
+      }
+    }
+})
+
+app.post("/survey", function(req,res,next){
+  var data = req.body;
+  var bmi = req.body.con_weight/(req.body.con_stature*req.body.con_stature);
+  console.log(req.body);
+
+  client.query('select * from p_s_mbrdata where email = ?',[req.body.email],function(err, result){
+      if(err){    //db연결오류
+         res.json({code:500})
+         console.log(err)
+      }else{      //게시판 부르기성공
+        var survey_mbr = result[0].memberuid;
+	   if(!(data.con_age && data.con_gender && data.con_stature && data.con_weight && data.h_meal && data.h_menu && data.h_nightmeal && data.h_water && data.h_drink && data.h_smoke &&
+		 data.h_exercise && data.h_sleep && data.h_stress)){
+	      res.json({code:410})
+	      console.log('insert failed.(Something Empty)')
+	    }else{      //내용오류
+                var bmi = req.body.con_weight/((req.body.con_stature/100)*(req.body.con_stature/100));
+		data.con_bmi = bmi;
+	        db.collection('survey').insert({survey_mbr:survey_mbr, survey_data:data, survey_date:new Date()},function(err,doc){
+	          if(err){
+	            res.json({code:500});
+	            console.log(err);
+	          }else{
+	            console.log('insert success')    //쓰기성공
+	            res.json({code:210})
+	          }
+	        })
+	    }
+      }
+  })
+
+  delete data.email;
+  if(data.eye_cataract || data.eye_glaucoma || data.eye_dry || data.eye_presbyopia || data.eye_myopia || data.eye_hyperopia || data.eye_astigmatism || data.eye_strabismus){
+    data.have_eye = true;
+  }
+  if(data.ear_tinnitus || data.ear_tympanitis || data.ear_impairment){
+    data.have_ear = true;
+  }
+  if(data.r_obstructive || data.r_tuberculosis || data.r_cough || data.r_asthma || data.r_pneumonia || data.r_rhinitis){
+    data.have_respiratory = true;
+  }
+  if(data.skin_allergy || data.skin_alopecia || data.skin_cancer || data.skin_acne || data.skin_atopic || data.skin_vitiligo || data.skin_psoriasis){
+    data.have_skin = true;
+  }
+  if(data.ger_hypertension || data.ger_diabetes){
+    data.have_geriatric = true;
+  }
+  if(max_blood){
+    var max_blood = data.max_blood
+    data.max_blood = max_blood;
+  }
+  if(min_blood){
+    var min_blood = data.min_blood
+    data.min_blood = min_blood;
+  }
+  if(data.can_liver || data.can_stomach || data.can_lung || data.can_thyroidGland || data.can_breast || data.can_other){
+    data.have_cancer = true;
+  }
+  if(data.fam_stroke || data.fam_myocardialInfarction || data.fam_hypertension || data.fam_diabetes || data.fam_cancer){
+    data.have_family = true;
+  }
+})
+
+app.post("/register", function(req,res,next){
+  var email = req.body.email;
+  var nic = req.body.nic;
+  var name = req.body.name;
+  var tel = req.body.tel;
+  var pwd = req.body.pwd;
+  var pwdCheck = req.body.pwdCheck;
+  var d = new Date();
+  var date = d.getFullYear()+(d.getMonth()+1)+d.getDate()+d.getHours()+d.getMinutes()+d.getSeconds();
+  console.log(email, pwd);
+    if(!(email && nic && name && tel && pwd && pwdCheck)){      //제목오류
+      res.json({code:410})
+      console.log('register failed.(Something Empty)')
+    }else{      //내용오류
+      if(pwd != pwdCheck){
+        res.json({code:411});
+        console.log('register failed.(check your pwd)')
+      }else{
+        client.query('insert into p_s_mbrdata (auth, email, pw, tel1, tel2, name, nic, addfield ,d_modify, d_regis) values (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)',[email, md5(pwd), tel, tel, name, nic, md5(pwd),date, date],function(err, result){
+          if(err){
+	    client.query('select * from p_s_mbrdata where = ?',[email],function(error, row){
+		if(row){
+		  res.json({code:500});
+		  console.log(err)
+		}else{
+		  res.json({code:501});
+		  console.log('register faild.(dup email)')
+		}
+	    })
+	  }else{
+            console.log('register success')    //쓰기성공
+            res.json({code:210})
+          } 
+        })
+      }
+    }
+})
+

@@ -1,0 +1,24 @@
+from bson import json_util
+from bson import json_util
+from bson import BSON
+import sys
+import json
+import pymongo
+
+conn = pymongo.MongoClient('localhost', 27017)
+db = conn.get_database('animal_Welfare')
+
+tel = ""
+
+for arg in sys.argv[1]:
+  tel += arg
+
+result = db.survey.find_one({"tel":tel},sort=[{'date',  -1}])
+
+for db.result_info in db.result_info.find({})
+
+info = db.result_info.find({})
+
+print (result)
+print (info)
+#print (json.dumps({result:result},default=json_util.default,ensure_ascii=False))
